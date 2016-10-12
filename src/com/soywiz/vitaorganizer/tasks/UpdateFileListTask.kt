@@ -16,7 +16,7 @@ class UpdateFileListTask(vitaOrganizer: VitaOrganizer) : VitaTask(vitaOrganizer)
 		}
 		status(Texts.format("STEP_ANALYZING_FILES", "folder" to VitaOrganizerSettings.vpkFolder))
 
-		val MAX_SUBDIRECTORY_LEVELS = 2
+		val MAX_SUBDIRECTORY_LEVELS = 5
 
 		fun listVpkFiles(folder: File, level: Int = 0): List<File> {
 			val out = arrayListOf<File>()
@@ -31,20 +31,40 @@ class UpdateFileListTask(vitaOrganizer: VitaOrganizer) : VitaTask(vitaOrganizer)
 			return out
 		}
 
-		val vpkFiles = listVpkFiles(File(VitaOrganizerSettings.vpkFolder))
+		val vpkDir = File(VitaOrganizerSettings.vpkFolder);
+		if(!IOMgr.pathExists(vpkDir)) {
+			error("Invalid VPK directory. Please select a valid one")
+			status("Invalid VPK directory. Please select a valid one")
+			return
+		}
+		val vpkFiles = listVpkFiles(vpkDir)
+		val maxCount = vpkFiles.count()
+		var counter: Int = 0
 
 		for (vpkFile in vpkFiles) {
+			++counter;
+			status("[$counter/$maxCount] Analyzing ${vpkFile.name}...")
+			if(!IOMgr.canRead(vpkFile)) {
+				println("Could not open $vpkFile for analyzing...")
+			}
 			val ff = VpkFile(vpkFile)
 			val gameId = ff.cacheAndGetGameId()
 			if (gameId != null) {
+				if(gameId.length != 9) {
+					println("Invalid gameId $gameId")
+					//TODO: aztocorrect gameId in param.sfo@vpk
+				}
 				synchronized(vitaOrganizer.VPK_GAME_IDS) {
 					vitaOrganizer.VPK_GAME_IDS += gameId
 				}
 			}
+			else {
+				println("Failed to analyze $vpkFile")
+			}
 
 			//Thread.sleep(200L)
 		}
-		status(Texts.format("STEP_DONE"))
 		vitaOrganizer.updateEntries()
+		status(Texts.format("STEP_DONE"))
 	}
 }

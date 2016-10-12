@@ -19,7 +19,7 @@ class OneStepToVitaTask(vitaOrganizer: VitaOrganizer, val vpkFile: VpkFile) : Vi
 			status("Promoting failed! Task aborted!")
 			return
 		}
-		PsvitaDevice.removeFile(sendPromotingVpkTask.vpkPath)
+		ConnectionMgr.deleteFile(sendPromotingVpkTask.vpkPath)
 
 		sendDataTask.performBase()
 

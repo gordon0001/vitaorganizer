@@ -1,146 +1,98 @@
 package com.soywiz.vitaorganizer
 
-import it.sauronsoftware.ftp4j.FTPClient
-import it.sauronsoftware.ftp4j.FTPDataTransferListener
-import it.sauronsoftware.ftp4j.FTPException
-import it.sauronsoftware.ftp4j.FTPFile
-import it.sauronsoftware.ftp4j.FTPReply
-import java.io.ByteArrayInputStream
-import java.io.File
-import java.io.FileNotFoundException
-import java.io.IOException
+import com.soywiz.util.MemoryStream2
+import com.soywiz.vitaorganizer.ext.getResourceURL
+import it.sauronsoftware.ftp4j.*
+import java.io.*
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
 import java.util.*
 import java.util.zip.ZipFile
+import javax.imageio.ImageIO
 import javax.swing.JOptionPane
 
 object PsvitaDevice {
-    fun checkAddress(ip: String, port: Int = 1337): Boolean {
-        try {
-            val sock = Socket()
-            sock.connect(InetSocketAddress(ip, port), 3000)
-            sock.close()
-            return true
-        } catch (e: Throwable) {
-            return false
-        }
-    }
-
-    fun discoverIp(port: Int = 1337): List<String> {
-        val ips = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
-        val ips2 = ips.map { it.hostAddress }.filter { it.startsWith("192.") }
-        val ipEnd = Regex("\\.(\\d+)$")
-        val availableIps = arrayListOf<String>()
-        var rest = 256
-        for (baseIp in ips2) {
-            for (n in 0 until 256) {
-                Thread {
-                    val ip = baseIp.replace(ipEnd, "\\.$n")
-                    if (checkAddress(ip, port)) {
-                        availableIps += ip
-                    }
-                    rest--
-                }.start()
-            }
-        }
-        while (rest > 0) {
-            //println(rest)
-            Thread.sleep(20L)
-        }
-        //println(availableIps)
-        return availableIps
-    }
-
-    val ftp = FTPClient().apply {
-        type = FTPClient.TYPE_BINARY
-    }
-
-    fun setFtpPromoteTimeouts() {
-        //ftp.connector.setCloseTimeout(20)
-        //ftp.connector.setReadTimeout(240) // PROM could take a lot of time!
-        //ftp.connector.setConnectionTimeout(120)
-    }
-
-    fun resetFtpTimeouts() {
-        ftp.connector.setCloseTimeout(20)
-        ftp.connector.setReadTimeout(240) // PROM could take a lot of time!
-        ftp.connector.setConnectionTimeout(120)
-
-        //ftp.connector.setCloseTimeout(2)
-        //ftp.connector.setReadTimeout(2)
-        //ftp.connector.setConnectionTimeout(2)
-    }
-
-    init {
-        resetFtpTimeouts()
-    }
-
-    //init {
-        //ftp.sendCustomCommand()
-    //}
-
     private fun connectedFtp(): FTPClient {
 		val ip = VitaOrganizerSettings.lastDeviceIp
 		val port = try { VitaOrganizerSettings.lastDevicePort.toInt() } catch (t: Throwable) { 1337 }
 
-
-
-        retries@for (n in 0 until 5) {
-            if (!ftp.isConnected()) {
-                println("Connecting to ftp $ip:$port...")
-                ftp.connect(ip, port)
-                ftp.login("", "")
-                if(ftp.isConnected()) {
-				    println("Connected")
-                }
-                else {
-                    println("Could not connect ($n)");
-                    break@retries
-                }
-            }
-            try {
-                ftp.noop()
-                break@retries
-            } catch (e: IOException) {
-                ftp.disconnect(false)
-            }
+        if(ConnectionMgr.connectToFtp(ip, port)) {
+            return ConnectionMgr.getFtpClient();
         }
-        return ftp
-    }
-    
-    fun disconnectFromFtp(): Boolean {
-        if(ftp.isConnected())
-            ftp.disconnect(false);
-           
-        return !ftp.isConnected();
-    } 
+        else
+            throw Exception("Could not connect to ftp");
 
-    fun getGameIds() = connectedFtp().list("/ux0:/app").filter { i -> i.type == it.sauronsoftware.ftp4j.FTPFile.TYPE_DIRECTORY }.map { File(it.name).name }
+		@Suppress("UNREACHABLE_CODE")
+		return ConnectionMgr.getFtpClient();
+    }
+
+    fun getGameIds() = connectedFtp().list("/ux0:/app/").filter { i -> i.type == it.sauronsoftware.ftp4j.FTPFile.TYPE_DIRECTORY }.map { File(it.name).name }
 
     fun getGameFolder(id: String) = "/ux0:/app/${File(id).name}"
 
-    fun downloadSmallFile(path: String): ByteArray {
-        try {
-            if (connectedFtp().fileSize(path) == 0L) {
+    fun downloadSmallFile(path: String, abortAfterNoOfBytes: Int = -1): ByteArray {
+        var fileSize = 0L
+		try {
+			fileSize = connectedFtp().fileSize(path)
+            if (fileSize == 0L) {
+				//println("Getting remote file succeeded, but the file size for $path is 0 byte")
                 return byteArrayOf()
             }
         } catch (e: Throwable) {
+			//println("Could not get file size of remote path $path")
             return byteArrayOf()
         }
 
-        val file = File.createTempFile("vita", "download")
+        //val file = File.createTempFile("vita", "download")
+
+		val stream = ByteArrayOutputStream()
+		var sizeDownloaded: Int = 0
         try {
-            connectedFtp().download(path, file)
-            return file.readBytes()
-        } catch (e: FTPException) {
-            e.printStackTrace()
-        } catch (e: Throwable) {
-            e.printStackTrace()
+            connectedFtp().download(path, stream, 0, when {
+                abortAfterNoOfBytes < 1 -> null
+                else -> object : FTPDataTransferListener {
+					override fun started() = Unit
+
+					override fun completed() = Unit
+
+					override fun aborted() {
+						println("received abort command for $path, throwing exceoption. downloaded size = $sizeDownloaded")
+					}
+
+					override fun transferred(size: Int) {
+						sizeDownloaded += size
+						if(size > abortAfterNoOfBytes) {
+							println("Aborting filetransfer to get only a chunk of the file $path")
+							connectedFtp().abortCurrentDataTransfer(false)
+                        }
+					}
+
+					override fun failed() {
+						println("$path failed")
+					}
+				}
+            })
+            return stream.toByteArray()
+        } catch(e: Throwable) {
+			if(abortAfterNoOfBytes > 0) {
+				println("Got the wanted download abort. path = $path  size = $sizeDownloaded")
+				if(sizeDownloaded >= abortAfterNoOfBytes) {
+					val size = stream.size()
+					println("OK. $path $size")
+					return stream.toByteArray()
+                }
+				else
+					println("bla $path")
+            }
+			else {
+				println("ftpexception $path")
+				e.printStackTrace()
+            }
         } finally {
             //e.printStackTrace()
-            file.delete()
+            //file.delete()
+			//stream.reset()
         }
         return byteArrayOf()
     }
@@ -160,7 +112,26 @@ object PsvitaDevice {
 
     fun getGameIconCached(id: String): ByteArray {
         val file = VitaOrganizerCache.entry(id).icon0File
-        if (!file.exists()) file.writeBytes(getGameIcon(id))
+        if (!file.exists()) {
+			var icon = getGameIcon(id)
+			if(icon.isEmpty()) {
+				println("Could not get icon for $id. returning defaulticon")
+				icon = getResourceURL("com/soywiz/vitaorganizer/icon.png").readBytes()
+				if(icon.isEmpty()) {
+					println("also could not get defaulticom for $id")
+                }
+			}
+			else {
+				//check for png magic 89 50 4E 47, 89 P N G
+				if (icon[1].toChar() != 'P' || icon[2].toChar() != 'N' || icon[3].toChar() != 'G') {
+					println("icon from $id is not a PNG file or is encrypted. replacing with default icon")
+					icon = getResourceURL("com/soywiz/vitaorganizer/icon.png").readBytes()
+				}
+			}
+
+			file.writeBytes(icon)
+			return icon
+		}
         return file.readBytes()
     }
 
@@ -221,12 +192,15 @@ object PsvitaDevice {
             createDirectoryCache.add(path)
             try {
                 connectedFtp().createDirectory(path)
-            } catch (e: IOException) {
-                throw e
-            } catch (e: FTPException) {
-                e.printStackTrace()
-            } catch (e: Throwable) {
-                e.printStackTrace()
+            }
+			catch (e: Throwable) {
+				try {
+					connectedFtp().list(path)
+				}
+				catch(e: Throwable) {
+					println("Could not create remote directory $path")
+					throw e
+				}
             }
         }
     }
@@ -253,19 +227,24 @@ object PsvitaDevice {
             val vname = "$base/$normalizedName"
             val directory = File(vname).parent.replace('\\', '/')
             val startSize = status.currentSize
-            println("Writting $vname...")
+        
             if (!entry.isDirectory) {
                 createDirectories(directory)
+                print("Writing $vname...")
                 try {
                     connectedFtp().upload(vname, zip.getInputStream(entry), 0L, 0L, object : FTPDataTransferListener {
                         override fun started() {
+                            print("started...")
                         }
 
                         override fun completed() {
-                            updateStatus(status)
+                             print("completed!")
+                             updateStatus(status)
                         }
 
                         override fun aborted() {
+                             print("aborted!")
+                             throw it.sauronsoftware.ftp4j.FTPAbortedException();
                         }
 
                         override fun transferred(size: Int) {
@@ -274,13 +253,39 @@ object PsvitaDevice {
                         }
 
                         override fun failed() {
+                            print("failed!")
+                            throw it.sauronsoftware.ftp4j.FTPDataTransferException();
                         }
                     })
-                }catch (e: FTPException) {
-                    e.printStackTrace()
-                    throw FileNotFoundException("Can't upload file $vname")
                 }
+                catch(e: FileNotFoundException) {
+                    e.printStackTrace()
+                    error("File $vname could not be found")
+                    return;
+                }
+                catch(e: IOException) {
+                    e.printStackTrace()
+                    throw IOException("An I/O error occured while uploading $vname")
+                }
+                catch(e: it.sauronsoftware.ftp4j.FTPException) {
+                    e.printStackTrace()
+                    throw IOException("FTPException: Operation failed: $vname")
+                }
+                catch(e: it.sauronsoftware.ftp4j.FTPIllegalReplyException) {
+                    e.printStackTrace()
+                   throw IOException("Illegal reply while uploading $vname")
+                }
+                catch(e: it.sauronsoftware.ftp4j.FTPDataTransferException) {
+                    e.printStackTrace()
+                    throw IOException("An I/O error occured while uploading $vname, but connection is still alive")
+                }
+                catch(e: it.sauronsoftware.ftp4j.FTPAbortedException) {
+                    e.printStackTrace()
+                    throw IOException("Abort request was sent while uploading $vname")
+                }
+                println("")
             }
+            
             status.currentSize = startSize + entry.size
             status.currentFile++
             updateStatus(status)
@@ -288,7 +293,20 @@ object PsvitaDevice {
 
         println("DONE. Now package should be promoted!")
     }
-
+/*throws FileNotFoundException
+	 *             If the supplied file cannot be found.
+	 * @throws IOException
+	 *             If an I/O error occurs.
+	 * @throws FTPIllegalReplyException
+	 *             If the server replies in an illegal way.
+	 * @throws FTPException
+	 *             If the operation fails.
+	 * @throws FTPDataTransferException
+	 *             If a I/O occurs in the data transfer connection. If you
+	 *             receive this exception the transfer failed, but the main
+	 *             connection with the remote FTP server is in theory still
+	 *             working.
+	 * @throws FTPAbortedException*/
     fun uploadFile(path: String, data: ByteArray, updateStatus: (Status) -> Unit = { }) {
         val status = Status()
         createDirectories(File(path).parent)
@@ -319,15 +337,6 @@ object PsvitaDevice {
         updateStatus(status)
     }
 
-    fun removeFile(path: String) {
-        try {
-            connectedFtp().deleteFile(path)
-        } catch (e: Throwable) {
-            println("Can't delete $path")
-            e.printStackTrace()
-        }
-    }
-
     fun promoteVpk(vpkPath: String, displayErrors: Boolean = true): Boolean {
         
         if(vpkPath.isNullOrEmpty()) {
@@ -338,7 +347,6 @@ object PsvitaDevice {
         println("Promoting: 'PROM $vpkPath'")
 
         try {
-            resetFtpTimeouts()
             val reply: FTPReply = connectedFtp().sendCustomCommand("PROM $vpkPath")
 
             if(reply.getCode() == 502) {
@@ -380,7 +388,16 @@ object PsvitaDevice {
         return false;
     }
 
+    fun info(text: String) {
+		JOptionPane.showMessageDialog(null, text, Texts.format("INFORMATION"), JOptionPane.INFORMATION_MESSAGE)
+	}
+
 	fun error(text: String) {
 		JOptionPane.showMessageDialog(null, text, "Error", JOptionPane.ERROR_MESSAGE)
+	}
+
+	fun warn(title: String, text: String): Boolean {
+		val result = JOptionPane.showConfirmDialog(null, text, title, JOptionPane.YES_NO_OPTION)
+		return (result == JOptionPane.YES_OPTION)
 	}
 }

@@ -9,6 +9,8 @@ object VitaOrganizerSettings {
 	var vpkFolder: String by PropDelegate(".")
 	var lastDeviceIp: String by PropDelegate("192.168.1.100")
 	var lastDevicePort: String by PropDelegate("1337")
+	var autoConnect: String by PropDelegate("false")
+	var antiIdle: String by PropDelegate("false")
 	var LANGUAGE: String by PropDelegate("auto")
 
 	val isLanguageAutodetect: Boolean get() = (LANGUAGE == "auto")

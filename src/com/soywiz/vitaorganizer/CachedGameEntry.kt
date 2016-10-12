@@ -14,38 +14,78 @@ class CachedGameEntry(val gameId: String) {
 		}
 	}
 	val hasExtendedPermissions by lazy {
-		try {
+		if(IOMgr.canRead(entry.permissionsFile))
 			entry.permissionsFile.readText().toBoolean()
-		} catch (e: Throwable) {
+		else
 			true
-		}
 	}
+	val attribute by lazy { psf["ATTRIBUTE"].toString() }
 	val id by lazy { psf["TITLE_ID"].toString() }
 	val title by lazy { psf["TITLE"].toString() }
 	val dumperVersion by lazy { 
         var text = "UNKNOWN";
-        if (entry.dumperVersionFile.exists())
-          text = entry.dumperVersionFile.readText();  
+		if(attribute == "32768")
+			text = "HB"
+    	else if(IOMgr.canRead(entry.dumperVersionFile))
+			text = entry.dumperVersionFile.readText(); 
+
         DumperNamesHelper().findDumperByShortName(text).longName 
     }
 	val compressionLevel by lazy { 
-        if(entry.compressionFile.exists()) 
-            entry.compressionFile.readText() 
-        else 
-            "0" 
+        if(IOMgr.canRead(entry.compressionFile))  {
+			//see https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+			//4.4.5
+			val method = entry.compressionFile.readText() 
+			if(method == "0")
+				"not compressed"
+			else if(method == "1")
+				"shrunk"
+			else if(method == "2")
+				"compression factor 1"
+			else if(method == "3")
+				"compression factor 2"
+			else if(method == "4")
+				"compression factor 3"
+			else if(method == "5")
+				"compression factor 4"
+			else if(method == "6")
+				"imploded"
+			else if(method == "7")
+				"reversed"
+			else if(method == "8")
+				"deflate"
+			else if(method == "9")
+				"deflate64"
+			else
+				method
+		}
+        else {
+			//should try to read from zip header too
+			"could not read from param.sfo"
+        }
     }
 	var inVita = false
 	var inPC = false
-	val vpkLocalPath: String? get() = entry.pathFile.readText(Charsets.UTF_8)
-	val vpkLocalFile: File? get() = if (vpkLocalPath != null) File(vpkLocalPath!!) else null
-	val vpkLocalVpkFile: VpkFile? get() = if (vpkLocalPath != null) VpkFile(File(vpkLocalPath!!)) else null
+	fun getVpkLocalPath(): String?  {
+        if (IOMgr.canRead(entry.pathFile)) {
+            val ret: String = entry.pathFile.readText(Charsets.UTF_8)
+            if (ret.isEmpty())
+                return null
+            else
+                return ret
+        } else {
+            return null
+        }
+    }
+	val vpkLocalFile: File? get() = if (getVpkLocalPath() != null) File(getVpkLocalPath()!!) else null
+	val vpkLocalVpkFile: VpkFile? get() = if (getVpkLocalPath() != null) VpkFile(File(getVpkLocalPath()!!)) else null
 	val size: Long by lazy {
-		try {
+		if(IOMgr.canRead(entry.sizeFile))
 			entry.sizeFile.readText().toLong()
-		} catch (e: Throwable) {
+		else
 			0L
-		}
 	}
 
 	override fun toString(): String = id
 }
+

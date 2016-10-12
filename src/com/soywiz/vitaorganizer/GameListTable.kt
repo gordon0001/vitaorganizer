@@ -1,6 +1,7 @@
 package com.soywiz.vitaorganizer
 
 import com.soywiz.util.stream
+import com.soywiz.vitaorganizer.ext.getResourceURL
 import com.soywiz.vitaorganizer.ext.getScaledImage
 import java.awt.BorderLayout
 import java.awt.Font
@@ -9,6 +10,7 @@ import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
 import javax.swing.*
@@ -66,8 +68,9 @@ open class GameListTable : JPanel(BorderLayout()) {
 				private fun include(item: Any): Boolean {
 					when (item) {
 						is CachedGameEntry -> {
-							for (value in item.psf.values) {
-								if (matcher.containsMatchIn(value.toString())) return true
+							for (it in item.psf.values) {
+								if (matcher.containsMatchIn(it.toString()))
+									return true
 							}
 							return false
 						}
@@ -268,13 +271,15 @@ open class GameListTable : JPanel(BorderLayout()) {
 		//filter = "Plant"
 	}
 
-	fun getEntryAtRow(row: Int): CachedGameEntry = model2.getValueAt(table.convertRowIndexToModel(row), 1) as CachedGameEntry
+	fun getEntryAtRow(row: Int): CachedGameEntry? = model2.getValueAt(table.convertRowIndexToModel(row), 1) as CachedGameEntry?
 
-	val currentEntry: CachedGameEntry get() = getEntryAtRow(table.selectedRow)
+	val currentEntry: CachedGameEntry? get() = getEntryAtRow(table.selectedRow)
 
 	fun showMenuForRow(row: Int) {
 		val rect = table.getCellRect(row, 1, true)
-		showMenuAtFor(rect.x, rect.y + rect.height, getEntryAtRow(row))
+		val entry = getEntryAtRow(row)
+		if(entry != null)
+			showMenuAtFor(rect.x, rect.y + rect.height, entry)
 	}
 
 	open fun showMenuAtFor(x: Int, y: Int, entry: CachedGameEntry) {
@@ -299,7 +304,17 @@ open class GameListTable : JPanel(BorderLayout()) {
 				val gameId = entry.gameId
 				val entry2 = VitaOrganizerCache.entry(gameId)
 				val icon = entry2.icon0File
-				val image = ImageIO.read(ByteArrayInputStream(icon.readBytes()))
+				var image: BufferedImage? = null
+				if(!IOMgr.canRead(icon)) {
+					println("cannot read cacbed icon for $gameId")
+					image = ImageIO.read(getResourceURL("com/soywiz/vitaorganizer/icon.png"))
+					if(image == null) {
+						println("also failed to set default icon for $gameId")
+                    }
+				}
+				else {
+					image = ImageIO.read(ByteArrayInputStream(icon.readBytes()))
+                }
 				val psf = PSF.read(entry2.paramSfoFile.readBytes().stream)
 				val extendedPermissions = entry.hasExtendedPermissions
 
@@ -322,6 +337,9 @@ open class GameListTable : JPanel(BorderLayout()) {
 						FileSize(entry.size),
 						entry.title
 					))
+				}
+				else {
+					println("Could not add $gameId because of invalid image (this message shouldnt appear if the bugfix was successfully)")
 				}
 			} catch (e: Throwable) {
 				println("Error processing: ${entry.gameId}")

@@ -11,3 +11,11 @@
 *.iml
 launch4j.log
 vitaorganizer.exe
+.classpath
+.project
+test/.classpath
+test/.project
+test/vitaorganizer_test.eml
+vitaorganizer.eml
+vitaorganizer.userlibraries
+gradle-app.setting

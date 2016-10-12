@@ -28,6 +28,7 @@ class VitaTaskQueue(val vitaOrganizer: VitaOrganizer) {
 			synchronized(tasks) {
 				tasks += task
 			}
+			task.status("Task added to queue")
 		} catch (t: Throwable) {
 			t.printStackTrace()
 		}

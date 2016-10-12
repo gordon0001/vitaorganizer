@@ -4,10 +4,9 @@ import com.soywiz.vitaorganizer.*
 import java.util.zip.ZipFile
 
 class SendDataToVitaTask(vitaOrganizer: VitaOrganizer, val vpkFile: VpkFile) : VitaTask(vitaOrganizer) {
-	fun performBase() {
+	fun performBase() : Boolean {
 
 		status(Texts.format("STEP_SENDING_GAME", "id" to vpkFile.id))
-		//val zip = ZipFile(entry.vpkFile)
 		try {
 			ZipFile(vpkFile.vpkFile).use { zip ->
 				PsvitaDevice.uploadGame(vpkFile.id, zip, filter = { path ->
@@ -22,15 +21,22 @@ class SendDataToVitaTask(vitaOrganizer: VitaOrganizer, val vpkFile: VpkFile) : V
 					status(Texts.format("STEP_SENDING_GAME_UPLOADING", "id" to vpkFile.id, "fileRange" to status.fileRange, "sizeRange" to status.sizeRange, "speed" to status.speedString))
 				}
 			}
+			status(Texts.format("SENT_GAME_DATA", "id" to vpkFile.id))
+			return true
 			//statusLabel.text = "Processing game ${vitaGameCount + 1}/${vitaGameIds.size} ($gameId)..."
-		} catch (e: Throwable) {
-			error(e.toString())
 		}
-		status(Texts.format("SENT_GAME_DATA", "id" to vpkFile.id))
+		catch (e: Throwable) {
+			error(e.toString())
+			return false
+		}
 	}
 
 	override fun perform() {
-		performBase()
-		status(Texts.format("GAME_SENT_SUCCESSFULLY", "id" to vpkFile.id))
+		if(performBase()) {
+			status(Texts.format("GAME_SENT_SUCCESSFULLY", "id" to vpkFile.id))
+        }
+		else {
+			status("Failed to send ${vpkFile.id}")
+        }
 	}
 }
